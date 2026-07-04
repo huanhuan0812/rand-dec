@@ -12,6 +12,8 @@
 #include <QDebug>
 #include <QGraphicsOpacityEffect>
 #include <QParallelAnimationGroup>
+#include <QSettings>
+#include <QPropertyAnimation>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -19,6 +21,9 @@ MainWindow::MainWindow(QWidget *parent)
     , m_animationCount(0)
     , m_finalNumber(0)
     , m_nameAnimation(nullptr)
+    , m_mode(1)
+    , m_isRolling(false)
+    , m_modeButton(nullptr)
 {
     // 设置窗口属性：无边框、置顶
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -30,11 +35,17 @@ MainWindow::MainWindow(QWidget *parent)
     // 设置窗口透明度 (0.9)
     setWindowOpacity(0.9);
 
+    // 加载配置文件
+    loadConfig();
+
     // 从文件加载名字列表
     loadNamesFromFile("names.txt");
 
     // 设置标签
     setupLabels();
+
+    // 创建模式切换按钮
+    setupModeButton();
 
     // 创建动画定时器
     m_animationTimer = new QTimer(this);
@@ -48,9 +59,22 @@ MainWindow::~MainWindow()
 {
 }
 
+void MainWindow::loadConfig()
+{
+    QSettings settings("config.ini", QSettings::IniFormat);
+    m_mode = settings.value("Settings/Mode", 1).toInt();
+    
+    // 限制模式范围
+    if (m_mode < 0 || m_mode > 1) {
+        m_mode = 1;
+    }
+    
+    qDebug() << "当前模式:" << (m_mode == 0 ? "自动停止" : "手动停止");
+}
+
 void MainWindow::setupLabels()
 {
-    // 创建显示学号的Label - 初始在屏幕中间
+    // 创建显示学号的Label
     m_numberLabel = new QLabel(this);
     m_numberLabel->setAlignment(Qt::AlignCenter);
     m_numberLabel->setStyleSheet(
@@ -61,10 +85,10 @@ void MainWindow::setupLabels()
         "   background-color: transparent;"
         "}"
     );
-    // 学号初始在屏幕中间
     m_numberLabel->setGeometry(0, 100, width(), 150);
+    m_numberLabel->setText("");
 
-    // 创建显示姓名的Label - 初始在屏幕中间，但透明
+    // 创建显示姓名的Label
     m_nameLabel = new QLabel(this);
     m_nameLabel->setAlignment(Qt::AlignCenter);
     m_nameLabel->setStyleSheet(
@@ -75,28 +99,170 @@ void MainWindow::setupLabels()
         "   background-color: transparent;"
         "}"
     );
-    // 姓名初始也在屏幕中间
     m_nameLabel->setGeometry(0, 100, width(), 150);
-
+    m_nameLabel->setText("");
+    
     // 设置透明度效果（初始为完全透明）
     QGraphicsOpacityEffect* opacityEffect = new QGraphicsOpacityEffect(this);
     opacityEffect->setOpacity(0);
     m_nameLabel->setGraphicsEffect(opacityEffect);
 
-    // 初始显示随机学号
-    if (!m_nameList.isEmpty()) {
-        int randomIndex = QRandomGenerator::global()->bounded(m_nameList.size());
-        m_finalNumber = m_nameList[randomIndex].first;
-        m_finalName = m_nameList[randomIndex].second;
-        m_numberLabel->setText(QString::number(m_finalNumber));
+    // 创建提示标签
+    m_hintLabel = new QLabel(this);
+    m_hintLabel->setAlignment(Qt::AlignCenter);
+    m_hintLabel->setStyleSheet(
+        "QLabel {"
+        "   color: rgba(255, 255, 255, 150);"
+        "   font-size: 24px;"
+        "   font-weight: normal;"
+        "   background-color: transparent;"
+        "}"
+    );
+    m_hintLabel->setGeometry(0, 260, width(), 50);
+    
+    // 根据模式设置提示文字
+    if (m_mode == 0) {
+        m_hintLabel->setText("点击以开始");
     } else {
-        m_finalNumber = QRandomGenerator::global()->bounded(1, 48);
-        m_finalName = "未知";
-        m_numberLabel->setText(QString::number(m_finalNumber));
+        m_hintLabel->setText("点击开始滚动");
     }
+}
 
-    // 确保姓名标签初始为空
+void MainWindow::setupModeButton()
+{
+    m_modeButton = new QPushButton(this);
+    m_modeButton->setFixedSize(70, 34);
+    m_modeButton->setCheckable(true);
+    m_modeButton->setChecked(m_mode == 0);
+    
+    // 更新按钮样式
+    updateModeButton();
+    
+    // 连接信号槽
+    connect(m_modeButton, &QPushButton::clicked, this, &MainWindow::toggleMode);
+    
+    // 设置位置（右下角）
+    updateButtonPosition();
+}
+
+void MainWindow::updateButtonPosition()
+{
+    if (m_modeButton) {
+        int x = width() - m_modeButton->width() - 15;
+        int y = height() - m_modeButton->height() - 15;
+        m_modeButton->move(x, y);
+    }
+}
+
+void MainWindow::updateModeButton()
+{
+    if (!m_modeButton) return;
+    
+    // Switch按钮样式 - 蓝色滑动开关
+    QString switchStyle;
+    
+    if (m_mode == 0) {
+        // 开启状态 - 蓝色
+        switchStyle = 
+            "QPushButton {"
+            "   background-color: #2196F3;"
+            "   border: 2px solid #2196F3;"
+            "   border-radius: 17px;"
+            "   color: white;"
+            "   font-size: 11px;"
+            "   font-weight: bold;"
+            "   text-align: left;"
+            "   padding-left: 8px;"
+            "}"
+            "QPushButton::indicator {"
+            "   width: 0px;"
+            "   height: 0px;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #1976D2;"
+            "   border-color: #1976D2;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #0D47A1;"
+            "   border-color: #0D47A1;"
+            "}";
+        m_modeButton->setText("自动");
+    } else {
+        // 关闭状态 - 灰色
+        switchStyle = 
+            "QPushButton {"
+            "   background-color: #BDBDBD;"
+            "   border: 2px solid #BDBDBD;"
+            "   border-radius: 17px;"
+            "   color: white;"
+            "   font-size: 11px;"
+            "   font-weight: bold;"
+            "   text-align: right;"
+            "   padding-right: 8px;"
+            "}"
+            "QPushButton::indicator {"
+            "   width: 0px;"
+            "   height: 0px;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #9E9E9E;"
+            "   border-color: #9E9E9E;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #757575;"
+            "   border-color: #757575;"
+            "}";
+        m_modeButton->setText("手动");
+    }
+    
+    m_modeButton->setStyleSheet(switchStyle);
+}
+
+void MainWindow::toggleMode()
+{
+    // 如果正在滚动，先停止
+    if (m_isRolling) {
+        if (m_animationTimer->isActive()) {
+            m_animationTimer->stop();
+        }
+        m_isRolling = false;
+    }
+    
+    // 如果有动画在播放，停止
+    if (m_nameAnimation) {
+        m_nameAnimation->stop();
+    }
+    
+    // 切换模式
+    m_mode = (m_mode == 0) ? 1 : 0;
+    
+    // 更新配置文件
+    QSettings settings("config.ini", QSettings::IniFormat);
+    settings.setValue("Settings/Mode", m_mode);
+    
+    // 更新按钮显示
+    updateModeButton();
+    
+    // 更新提示文字
+    if (m_hintLabel) {
+        if (m_mode == 0) {
+            m_hintLabel->setText("点击以开始");
+        } else {
+            m_hintLabel->setText("点击开始滚动");
+        }
+        m_hintLabel->show();
+    }
+    
+    // 重置显示
+    m_numberLabel->setText("");
     m_nameLabel->setText("");
+    if (QGraphicsOpacityEffect* effect = qobject_cast<QGraphicsOpacityEffect*>(m_nameLabel->graphicsEffect())) {
+        effect->setOpacity(0);
+    }
+    m_numberLabel->move(0, 100);
+    m_nameLabel->move(0, 100);
+    
+    qDebug() << "切换到模式:" << (m_mode == 0 ? "自动停止" : "手动停止");
 }
 
 void MainWindow::loadNamesFromFile(const QString& filename)
@@ -170,6 +336,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     if (m_nameLabel) {
         m_nameLabel->setGeometry(0, 100, width(), 150);
     }
+    if (m_hintLabel) {
+        m_hintLabel->setGeometry(0, 260, width(), 50);
+    }
+    
+    // 更新按钮位置
+    updateButtonPosition();
 }
 
 void MainWindow::changeEvent(QEvent *event)
@@ -185,18 +357,67 @@ void MainWindow::changeEvent(QEvent *event)
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
     Q_UNUSED(event);
-    startRandomAnimation();
+    
+    if (m_mode == 0) {
+        // 自动停止模式：点击开始，自动停止
+        startRandomAnimation();
+    } else {
+        // 手动停止模式：点击切换滚动/停止
+        if (m_isRolling) {
+            // 正在滚动，停止
+            stopRolling();
+        } else {
+            // 未滚动，开始
+            startRolling();
+        }
+    }
 }
 
-void MainWindow::applyRoundedMask()
+void MainWindow::startRolling()
 {
-    if (width() <= 0 || height() <= 0)
-        return;
+    if (m_animationTimer->isActive()) {
+        m_animationTimer->stop();
+    }
 
-    QPainterPath path;
-    path.addRoundedRect(rect(), m_radius, m_radius);
-    QRegion region = QRegion(path.toFillPolygon().toPolygon());
-    setMask(region);
+    // 隐藏提示标签
+    if (m_hintLabel) {
+        m_hintLabel->hide();
+    }
+
+    // 重置学号到屏幕中间并清空
+    m_numberLabel->move(0, 100);
+    m_numberLabel->setGeometry(0, 100, width(), 150);
+    m_numberLabel->setText("");
+
+    // 隐藏姓名
+    if (QGraphicsOpacityEffect* effect = qobject_cast<QGraphicsOpacityEffect*>(m_nameLabel->graphicsEffect())) {
+        effect->setOpacity(0);
+    }
+    m_nameLabel->setText("");
+    m_nameLabel->setGeometry(0, 100, width(), 150);
+
+    // 重置计数
+    m_animationCount = 0;
+    m_isRolling = true;
+
+    // 启动定时器，每50ms更新一次
+    m_animationTimer->start(50);
+}
+
+void MainWindow::stopRolling()
+{
+    // 停止定时器
+    if (m_animationTimer->isActive()) {
+        m_animationTimer->stop();
+    }
+    
+    m_isRolling = false;
+    
+    // 生成最终结果
+    generateResult();
+    
+    // 显示姓名动画
+    showNameWithAnimation();
 }
 
 void MainWindow::startRandomAnimation()
@@ -205,42 +426,54 @@ void MainWindow::startRandomAnimation()
         m_animationTimer->stop();
     }
 
-    // 重置学号到屏幕中间
+    // 隐藏提示标签
+    if (m_hintLabel) {
+        m_hintLabel->hide();
+    }
+
+    // 重置学号到屏幕中间并清空
     m_numberLabel->move(0, 100);
     m_numberLabel->setGeometry(0, 100, width(), 150);
+    m_numberLabel->setText("");
 
     // 隐藏姓名
     if (QGraphicsOpacityEffect* effect = qobject_cast<QGraphicsOpacityEffect*>(m_nameLabel->graphicsEffect())) {
         effect->setOpacity(0);
     }
     m_nameLabel->setText("");
-    // 重置姓名位置到中间
     m_nameLabel->setGeometry(0, 100, width(), 150);
 
     // 重置计数
     m_animationCount = 0;
 
     // 启动定时器，每50ms更新一次
-    m_animationTimer->start(50);
+    m_animationTimer->start(25);
 }
 
 void MainWindow::updateAnimation()
 {
     m_animationCount++;
 
-    if (m_animationCount <= 20) { // 20次 * 50ms = 1秒
-        // 动画过程中在屏幕中间显示随机学号
+    if (m_mode == 0) {
+        // 自动停止模式：20次后停止 (40 * 25ms = 1秒)
+        if (m_animationCount <= 40) {
+            if (!m_nameList.isEmpty()) {
+                int randomIndex = QRandomGenerator::global()->bounded(m_nameList.size());
+                int randomNum = m_nameList[randomIndex].first;
+                m_numberLabel->setText(QString::number(randomNum));
+            }
+        } else {
+            m_animationTimer->stop();
+            generateResult();
+            showNameWithAnimation();
+        }
+    } else {
+        // 手动停止模式：持续滚动
         if (!m_nameList.isEmpty()) {
             int randomIndex = QRandomGenerator::global()->bounded(m_nameList.size());
             int randomNum = m_nameList[randomIndex].first;
             m_numberLabel->setText(QString::number(randomNum));
         }
-    } else {
-        // 动画结束，停止定时器并生成最终结果
-        m_animationTimer->stop();
-        generateResult();
-        // 显示姓名动画（学号上移，姓名从中间淡入并下移）
-        showNameWithAnimation();
     }
 }
 
@@ -283,34 +516,31 @@ void MainWindow::showNameWithAnimation()
         qDebug() << "设置姓名文本:" << m_finalName;
     }
 
-    // 缩小间距：学号向上移动少一点，姓名向下移动少一点
-    int numberStartY = 100;     // 学号起始位置（中间）
-    int numberEndY = 60;        // 学号结束位置（稍微靠上）
-
-    // 姓名从中间平移到学号下方
-    int nameStartY = 100;       // 姓名起始位置（中间）
-    int nameEndY = 140;         // 姓名结束位置（学号下方）
+    int numberStartY = 100;
+    int numberEndY = 60;
+    int nameStartY = 100;
+    int nameEndY = 140;
 
     // 先设置初始位置
     m_numberLabel->move(0, numberStartY);
     m_nameLabel->move(0, nameStartY);
     effect->setOpacity(0);
 
-    // 创建学号平移动画（向上移动）- 使用平滑缓动，无弹跳
+    // 创建学号平移动画
     QPropertyAnimation* numberMoveAnimation = new QPropertyAnimation(m_numberLabel, "pos", this);
     numberMoveAnimation->setDuration(600);
     numberMoveAnimation->setStartValue(QPoint(0, numberStartY));
     numberMoveAnimation->setEndValue(QPoint(0, numberEndY));
     numberMoveAnimation->setEasingCurve(QEasingCurve::InOutQuad);
 
-    // 创建姓名平移动画（向下移动）- 使用平滑缓动，无弹跳
+    // 创建姓名平移动画
     QPropertyAnimation* nameMoveAnimation = new QPropertyAnimation(m_nameLabel, "pos", this);
     nameMoveAnimation->setDuration(600);
     nameMoveAnimation->setStartValue(QPoint(0, nameStartY));
     nameMoveAnimation->setEndValue(QPoint(0, nameEndY));
     nameMoveAnimation->setEasingCurve(QEasingCurve::InOutQuad);
 
-    // 创建姓名透明度动画（从透明到不透明）
+    // 创建姓名透明度动画
     QPropertyAnimation* opacityAnimation = new QPropertyAnimation(effect, "opacity", this);
     opacityAnimation->setDuration(600);
     opacityAnimation->setStartValue(0.0);
@@ -323,16 +553,34 @@ void MainWindow::showNameWithAnimation()
     group->addAnimation(nameMoveAnimation);
     group->addAnimation(opacityAnimation);
 
-    // 使用智能指针保存
     m_nameAnimation = group;
 
-    // 连接信号，用于调试
+    // 动画结束后重新显示提示
     connect(group, &QParallelAnimationGroup::finished, [this]() {
         qDebug() << "动画完成，学号位置:" << m_numberLabel->pos() 
                  << "姓名位置:" << m_nameLabel->pos()
                  << "姓名:" << m_nameLabel->text();
+        
+        if (m_hintLabel) {
+            if (m_mode == 0) {
+                m_hintLabel->setText("点击再次抽选");
+            } else {
+                m_hintLabel->setText("点击开始滚动");
+            }
+            m_hintLabel->show();
+        }
     });
 
-    // 启动动画，设置自动删除
     group->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::applyRoundedMask()
+{
+    if (width() <= 0 || height() <= 0)
+        return;
+
+    QPainterPath path;
+    path.addRoundedRect(rect(), m_radius, m_radius);
+    QRegion region = QRegion(path.toFillPolygon().toPolygon());
+    setMask(region);
 }
